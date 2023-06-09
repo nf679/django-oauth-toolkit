@@ -60,6 +60,49 @@ class TokenHasScope(BasePermission):
             )
 
 
+class TokenHasAtLeastOneScope(TokenHasScope):
+    """
+    The request is authenticated as a user and the token has at least one right scope.
+    """
+
+    def has_permission(self, request, view):
+        token = request.auth
+
+        if not token:
+            return False
+
+        if hasattr(token, "scope"):  # OAuth 2
+            required_scopes = super().get_scopes(request, view)
+            log.debug("Required scopes to access resource: {0}".format(required_scopes))
+
+            # If any of the required scopes are valid, return True.
+            for given_scope in required_scopes:
+                if token.is_valid([given_scope]):
+                    return True
+
+            # Provide information about required scope?
+            include_required_scope = (
+                oauth2_settings.ERROR_RESPONSE_WITH_SCOPES
+                and required_scopes
+                and not token.is_expired()
+                and not token.allow_scopes(required_scopes)
+            )
+
+            if include_required_scope:
+                self.message = {
+                    "detail": PermissionDenied.default_detail,
+                    "required_scopes": list(required_scopes),
+                }
+
+            return False
+
+        assert False, (
+            "TokenHasAtLeastOneScope requires the"
+            "`oauth2_provider.rest_framework.OAuth2Authentication` authentication "
+            "class to be used."
+        )
+
+
 class TokenHasReadWriteScope(TokenHasScope):
     """
     The request is authenticated as a user and the token used has the right scope
@@ -83,6 +126,27 @@ class TokenHasReadWriteScope(TokenHasScope):
 class TokenHasResourceScope(TokenHasScope):
     """
     The request is authenticated as a user and the token used has the right scope
+    """
+
+    def get_scopes(self, request, view):
+        try:
+            view_scopes = super().get_scopes(request, view)
+        except ImproperlyConfigured:
+            view_scopes = []
+
+        if request.method.upper() in SAFE_METHODS:
+            scope_type = oauth2_settings.READ_SCOPE
+        else:
+            scope_type = oauth2_settings.WRITE_SCOPE
+
+        required_scopes = ["{}:{}".format(scope, scope_type) for scope in view_scopes]
+
+        return required_scopes
+
+
+class TokenHasAtLeastOneResourceScope(TokenHasAtLeastOneScope):
+    """
+    The request is authenticated as a user and the token used has at least one right scope.
     """
 
     def get_scopes(self, request, view):
